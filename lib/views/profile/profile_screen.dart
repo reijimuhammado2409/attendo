@@ -26,7 +26,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _user = widget.user;
-    if (_user == null) _fetchProfile();
+    _fetchProfile();
+    
   }
 
   @override
@@ -54,12 +55,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       final response = await _apiService.getProfile(token: token);
 
+      debugPrint('🔍 RAW PROFILE RESPONSE: $response');
+
       // API ini pakai key "data" bukan "status"
       final data = response['data'];
       if (data != null && mounted) {
-        final user = UserModel.fromJson(data as Map<String, dynamic>);
-        await SharedPref.saveUser(user);
-        setState(() => _user = user);
+        final newUser = UserModel.fromJson(data as Map<String, dynamic>);
+        
+        // ambil user lama dari local
+        final oldUser = await SharedPref.getUser();
+
+        // merge biar createdAt gak hilang
+        final mergedUser = newUser.copyWith(
+          createdAt: newUser.createdAt ?? oldUser?.createdAt,
+          avatar: newUser.avatar ?? oldUser?.avatar,
+        );
+
+        await SharedPref.saveUser(mergedUser);
+        setState(() => _user = mergedUser);
       } else {
         setState(() {
           _errorMessage =
@@ -388,12 +401,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 label: 'ID Pengguna',
                 value: _user?.id?.toString() ?? '-',
               ),
-              _InfoRow(
-                icon: Icons.calendar_today_outlined,
-                label: 'Bergabung Sejak',
-                value: _formatDate(_user?.createdAt),
-                isLast: true,
-              ),
+
             ],
           ),
           const SizedBox(height: 24),
@@ -487,20 +495,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         borderRadius: BorderRadius.circular(6),
       ),
     );
-  }
-
-  String _formatDate(String? raw) {
-    if (raw == null) return '-';
-    try {
-      final date = DateTime.parse(raw);
-      const months = [
-        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
-      ];
-      return '${date.day} ${months[date.month - 1]} ${date.year}';
-    } catch (_) {
-      return raw;
-    }
   }
 
   String _formatDateShort(String raw) {

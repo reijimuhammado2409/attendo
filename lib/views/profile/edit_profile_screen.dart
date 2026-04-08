@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/api_service.dart';
 import '../../utils/shared_pref.dart';
+import 'package:image_picker/image_picker.dart';
+
 
 class EditProfileScreen extends StatefulWidget {
   final UserModel user;
@@ -21,12 +24,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = false;
   bool _hasChanges = false;
   String? _errorMessage;
+  File? _pickedPhoto;        // file foto yang dipilih user
+  bool _isUploadingPhoto = false;
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
+      print("AVATAR URL: ${widget.user.avatar}");
+
     _nameController = TextEditingController(text: widget.user.name ?? '');
     _nameController.addListener(_checkChanges);
   }
@@ -42,6 +49,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   void _checkChanges() {
     final nameChanged = _nameController.text.trim() != (widget.user.name ?? '');
+    // final photoChanged = _pickedPhoto != null;
+    // final hasChanges = nameChanged || photoChanged;
+
     if (nameChanged != _hasChanges) {
       setState(() => _hasChanges = nameChanged);
     }
@@ -88,8 +98,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final updatedData = response['data'];
       final UserModel updatedUser;
 
+      // SESUDAH (merge dengan data lama biar batch/training/gender gak ilang):
       if (updatedData is Map<String, dynamic>) {
-        updatedUser = UserModel.fromJson(updatedData);
+        updatedUser = widget.user.copyWith(
+          name: updatedData['name'] as String? ?? _nameController.text.trim(),
+          // update avatar kalau API return yang baru
+          avatar: updatedData['profile_photo_url'] as String? ?? widget.user.avatar,
+        );
       } else {
         updatedUser = widget.user.copyWith(
           name: _nameController.text.trim(),
@@ -115,6 +130,128 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) setState(() => _errorMessage = 'Gagal menyimpan perubahan.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // foto upload logic
+    Future<void> _handlePhotoUpload() async {
+    // Pilih sumber foto
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Pilih Foto',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.indigo),
+              title: const Text('Kamera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.indigo),
+              title: const Text('Galeri'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: source,
+      imageQuality: 80,
+      maxWidth: 800,
+    );
+
+    if (picked == null) return;
+
+    final file = File(picked.path);
+    setState(() {
+      _pickedPhoto = file;
+      _isUploadingPhoto = true;
+    });
+    _checkChanges();
+
+    try {
+      final token = await SharedPref.getToken();
+      if (token == null) return;
+
+      final response = await _apiService.updateProfilePhoto(
+        token: token,
+        photo: file,
+      );
+
+      // Response: { "data": { "profile_photo": "https://..." } }
+      final photoUrl = response['data']?['profile_photo'] as String?;
+
+      if (photoUrl != null) {
+        final updatedUser = widget.user.copyWith(avatar: photoUrl);
+        await SharedPref.saveUser(updatedUser);
+
+        if (!mounted) return;
+        setState(() {
+          _pickedPhoto = null;
+          _isUploadingPhoto = false;
+          _hasChanges = false; // penting
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Foto profil berhasil diperbarui!'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+          Navigator.pop(context, updatedUser); // langsung balik
+        //  setState(() {
+        //     _pickedPhoto = null;
+        //     _isUploadingPhoto = false;
+        //     _hasChanges = false;
+        //   });
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _pickedPhoto = null); // rollback preview
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _pickedPhoto = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Gagal mengupload foto.'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
     }
   }
 
@@ -244,28 +381,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               color: Colors.indigo.shade100,
             ),
             child: ClipOval(
-              child: widget.user.avatar != null
-                  ? Image.network(
-                      widget.user.avatar!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _defaultAvatar(),
-                    )
-                  : _defaultAvatar(),
+              child: _isUploadingPhoto
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: Colors.indigo, strokeWidth: 2))
+                : _pickedPhoto != null
+                    ? Image.file(_pickedPhoto!, fit: BoxFit.cover)
+                    : widget.user.avatar != null
+                        ? Image.network(
+                            widget.user.avatar!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => _defaultAvatar(),
+                          )
+                        : _defaultAvatar(),
             ),
           ),
           GestureDetector(
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Fitur upload foto segera hadir'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
+            onTap: _isUploadingPhoto ? null : _handlePhotoUpload,
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.indigo,
+                color: _isUploadingPhoto ? Colors.grey : Colors.indigo,
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 2),
               ),

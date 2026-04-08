@@ -153,6 +153,58 @@ class ApiService {
     }
   }
 
+  /// Update foto profil — PUT /profile/photo (multipart)
+  Future<Map<String, dynamic>> updateProfilePhoto({
+    required String token,
+    required File photo,
+  }) async {
+    try {
+      final bytes = await photo.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      final response = await http
+        .put(
+          Uri.parse('$_baseUrl${Constants.editProfilePhotoEndpoint}'),
+          headers: _headers(token: token),
+          body: jsonEncode({
+            'profile_photo': base64Image,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+      // final request = http.MultipartRequest(
+      //   'POST', // beberapa Laravel API pakai POST + _method spoofing
+      //   Uri.parse('$_baseUrl${Constants.editProfilePhotoEndpoint}'),
+      // );
+
+      // request.headers.addAll({
+      //   'Authorization': 'Bearer $token',
+      //   'Accept': 'application/json',
+      // });
+
+      // // Spoofing PUT karena multipart di Laravel sering pakai POST + _method
+      // request.fields['_method'] = 'PUT';
+
+      // print("PHOTO PATH: ${photo.path}");
+      // print("EXISTS: ${photo.existsSync()}");
+
+      // request.files.add(await http.MultipartFile.fromPath(
+      //   'profile_photo', // ← nama field sesuai API
+      //   photo.path,
+      // ));
+
+      // final streamed = await request.send().timeout(const Duration(seconds: 30));
+      // final response = await http.Response.fromStream(streamed);
+
+      return _parseResponse(response);
+    } on SocketException {
+      throw ApiException(message: 'Tidak ada koneksi internet.');
+    } on HttpException {
+      throw ApiException(message: 'Gagal terhubung ke server.');
+    } on FormatException {
+      throw ApiException(message: 'Format response tidak valid.');
+    }
+  }
+
   // ─── ABSEN ───────────────────────────────────────────────────────────────
 
   /// Get riwayat absen
@@ -162,6 +214,62 @@ class ApiService {
           .get(
             Uri.parse('$_baseUrl${Constants.absenEndpoint}'),
             headers: _headers(token: token),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      return _parseResponse(response);
+    } on SocketException {
+      throw ApiException(message: 'Tidak ada koneksi internet.');
+    } on HttpException {
+      throw ApiException(message: 'Gagal terhubung ke server.');
+    } on FormatException {
+      throw ApiException(message: 'Format response tidak valid.');
+    }
+  }
+
+  /// Check in absen
+  Future<Map<String, dynamic>> checkIn({
+    required String token,
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/absen-check-in'),
+            headers: _headers(token: token),
+            body: jsonEncode({
+              'latitude': latitude,
+              'longitude': longitude,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      return _parseResponse(response);
+    } on SocketException {
+      throw ApiException(message: 'Tidak ada koneksi internet.');
+    } on HttpException {
+      throw ApiException(message: 'Gagal terhubung ke server.');
+    } on FormatException {
+      throw ApiException(message: 'Format response tidak valid.');
+    }
+  }
+
+  /// Check out absen
+  Future<Map<String, dynamic>> checkOut({
+    required String token,
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/absen-check-out'),
+            headers: _headers(token: token),
+            body: jsonEncode({
+              'latitude': latitude,
+              'longitude': longitude,
+            }),
           )
           .timeout(const Duration(seconds: 30));
 
